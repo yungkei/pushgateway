@@ -140,14 +140,29 @@ func (dms *DiskMetricStore) Ready() error {
 
 // GetMetricFamilies implements the MetricStore interface.
 func (dms *DiskMetricStore) GetMetricFamilies() []*dto.MetricFamily {
+	return dms.GetMetricFamiliesWithVisibility(-1*time.Second, false)
+}
+
+// GetMetricFamilies implements the MetricStore interface.
+func (dms *DiskMetricStore) GetMetricFamiliesWithVisibility(metricsVisibilityTimeout time.Duration, metricsVisibilityTimeoutWipe bool) []*dto.MetricFamily {
 	dms.lock.RLock()
 	defer dms.lock.RUnlock()
 
 	result := []*dto.MetricFamily{}
 	mfStatByName := map[string]mfStat{}
-
-	for _, group := range dms.metricGroups {
+	for k, group := range dms.metricGroups {
 		for name, tmf := range group.Metrics {
+
+			tmfTimestamp := tmf.Timestamp
+			if metricsVisibilityTimeout > 0 && tmfTimestamp.Add(metricsVisibilityTimeout).Before(time.Now()) {
+				level.Debug(dms.logger).Log("msg", "do not display visibility timeout metricGroup", "groupKey", k)
+				if metricsVisibilityTimeoutWipe {
+					level.Debug(dms.logger).Log("msg", "wipe the visibility timeout metricGroup", "groupKey", k)
+					delete(dms.metricGroups, k)
+				}
+				continue
+			}
+
 			mf := tmf.GetMetricFamily()
 			if mf == nil {
 				level.Warn(dms.logger).Log("msg", "storage corruption detected, consider wiping the persistence file")
@@ -186,6 +201,7 @@ func (dms *DiskMetricStore) GetMetricFamilies() []*dto.MetricFamily {
 			}
 		}
 	}
+	level.Debug(dms.logger).Log("msg", "metrics stored", "size", len(dms.metricGroups))
 	return result
 }
 

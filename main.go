@@ -63,17 +63,19 @@ func (lf logFunc) Println(v ...interface{}) {
 
 func main() {
 	var (
-		app                 = kingpin.New(filepath.Base(os.Args[0]), "The Pushgateway").UsageWriter(os.Stdout)
-		webConfig           = webflag.AddFlags(app, ":9091")
-		metricsPath         = app.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
-		externalURL         = app.Flag("web.external-url", "The URL under which the Pushgateway is externally reachable.").Default("").URL()
-		routePrefix         = app.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints. Defaults to the path of --web.external-url.").Default("").String()
-		enableLifeCycle     = app.Flag("web.enable-lifecycle", "Enable shutdown via HTTP request.").Default("false").Bool()
-		enableAdminAPI      = app.Flag("web.enable-admin-api", "Enable API endpoints for admin control actions.").Default("false").Bool()
-		persistenceFile     = app.Flag("persistence.file", "File to persist metrics. If empty, metrics are only kept in memory.").Default("").String()
-		persistenceInterval = app.Flag("persistence.interval", "The minimum interval at which to write out the persistence file.").Default("5m").Duration()
-		pushUnchecked       = app.Flag("push.disable-consistency-check", "Do not check consistency of pushed metrics. DANGEROUS.").Default("false").Bool()
-		promlogConfig       = promlog.Config{}
+		app                          = kingpin.New(filepath.Base(os.Args[0]), "The Pushgateway").UsageWriter(os.Stdout)
+		webConfig                    = webflag.AddFlags(app, ":9091")
+		metricsPath                  = app.Flag("web.telemetry-path", "Path under which to expose metrics.").Default("/metrics").String()
+		externalURL                  = app.Flag("web.external-url", "The URL under which the Pushgateway is externally reachable.").Default("").URL()
+		routePrefix                  = app.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints. Defaults to the path of --web.external-url.").Default("").String()
+		enableLifeCycle              = app.Flag("web.enable-lifecycle", "Enable shutdown via HTTP request.").Default("false").Bool()
+		enableAdminAPI               = app.Flag("web.enable-admin-api", "Enable API endpoints for admin control actions.").Default("false").Bool()
+		persistenceFile              = app.Flag("persistence.file", "File to persist metrics. If empty, metrics are only kept in memory.").Default("").String()
+		persistenceInterval          = app.Flag("persistence.interval", "The minimum interval at which to write out the persistence file.").Default("5m").Duration()
+		pushUnchecked                = app.Flag("push.disable-consistency-check", "Do not check consistency of pushed metrics. DANGEROUS.").Default("false").Bool()
+		metricsVisibilityTimeout     = app.Flag("metrics.visibility-timeout", "Do not display visibility timeout metricGroup. It is not enabled If the value is less than 0").Default("-1s").Duration()
+		metricsVisibilityTimeoutWipe = app.Flag("metrics.visibility-timeout-wipe", "Wipe the visibility timeout metricGroup when scraping metrics.").Default("false").Bool()
+		promlogConfig                = promlog.Config{}
 	)
 	promlogflag.AddFlags(app, &promlogConfig)
 	app.Version(version.Print("pushgateway"))
@@ -89,6 +91,8 @@ func main() {
 	level.Debug(logger).Log("msg", "external URL", "url", *externalURL)
 	level.Debug(logger).Log("msg", "path prefix used externally", "path", externalPathPrefix)
 	level.Debug(logger).Log("msg", "path prefix for internal routing", "path", *routePrefix)
+	level.Info(logger).Log("metricsVisibilityTimeout ", *metricsVisibilityTimeout)
+	level.Info(logger).Log("metricsVisibilityTimeout ", *metricsVisibilityTimeoutWipe)
 
 	// flags is used to show command line flags on the status page.
 	// Kingpin default flags are excluded as they would be confusing.
@@ -105,7 +109,9 @@ func main() {
 	// Create a Gatherer combining the DefaultGatherer and the metrics from the metric store.
 	g := prometheus.Gatherers{
 		prometheus.DefaultGatherer,
-		prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) { return ms.GetMetricFamilies(), nil }),
+		prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
+			return ms.GetMetricFamiliesWithVisibility(*metricsVisibilityTimeout, *metricsVisibilityTimeoutWipe), nil
+		}),
 	}
 
 	r := route.New()
